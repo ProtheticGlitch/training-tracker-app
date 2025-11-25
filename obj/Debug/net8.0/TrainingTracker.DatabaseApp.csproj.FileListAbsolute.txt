@@ -1,0 +1,14 @@
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\bin\Debug\net8.0\TrainingTracker.DatabaseApp.exe
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\bin\Debug\net8.0\TrainingTracker.DatabaseApp.deps.json
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\bin\Debug\net8.0\TrainingTracker.DatabaseApp.runtimeconfig.json
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\bin\Debug\net8.0\TrainingTracker.DatabaseApp.dll
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\bin\Debug\net8.0\TrainingTracker.DatabaseApp.pdb
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.AssemblyInfoInputs.cache
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.AssemblyInfo.cs
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.csproj.CoreCompileInputs.cache
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.dll
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\refint\TrainingTracker.DatabaseApp.dll
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.pdb
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\TrainingTracker.DatabaseApp.genruntimeconfig.cache
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Debug\net8.0\ref\TrainingTracker.DatabaseApp.dll

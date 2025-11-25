@@ -1,0 +1,2 @@
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Release\net8.0-windows\App.g.cs
+C:\Users\romaz\OneDrive\Desktop\Новая папка\TrainingTracker.DatabaseApp\obj\Release\net8.0-windows\TrainingTracker.DatabaseApp_MarkupCompile.cache
