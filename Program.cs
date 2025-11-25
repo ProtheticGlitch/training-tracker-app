@@ -1,167 +1,134 @@
-using System.Globalization;
-using Microsoft.Data.Sqlite;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Linq;
 
-namespace TrainingTracker.DatabaseApp;
+namespace TrainingTracker.ExperimentApp;
 
-public sealed record TrainingSession(
-    Guid Id,
-    DateOnly Date,
-    string Type,
-    int DurationMinutes,
-    int Intensity,
-    string Notes)
+public sealed record TrainingPlan(
+    string Name,
+    double BaseStimulus,
+    double AdaptationRate,
+    double FatigueRate,
+    double RecoverySpeed,
+    double Variation)
 {
-    public string DateFormatted => Date.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture);
+    public static IReadOnlyList<TrainingPlan> Predefined() =>
+        new List<TrainingPlan>
+        {
+            new("Силовая база", 7.5, 0.9, 1.1, 1.4, 0.12),
+            new("Общая выносливость", 6.0, 0.85, 0.9, 1.2, 0.08),
+            new("HIIT/кроссфит", 9.0, 1.05, 1.4, 1.0, 0.2),
+            new("Техника + кардио", 5.5, 0.7, 0.6, 1.6, 0.1)
+        };
 }
 
-public sealed record TrainingStatistics(
-    int TotalSessions,
-    int TotalMinutes,
-    double AverageDurationMinutes,
-    double AverageIntensity,
-    string? MostPopularWorkout,
-    int LastWeekSessions);
-
-internal sealed class TrainingDatabase
+public sealed class TrainingPlanOption : INotifyPropertyChanged
 {
-    private const string DateFormat = "yyyy-MM-dd";
-    private readonly string _connectionString;
+    private bool _isSelected = true;
 
-    public TrainingDatabase(string dbPath)
+    public TrainingPlanOption(TrainingPlan plan) => Plan = plan;
+
+    public TrainingPlan Plan { get; }
+
+    public bool IsSelected
     {
-        _connectionString = $"Data Source={dbPath}";
-        Initialize();
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            OnPropertyChanged();
+        }
     }
 
-    public IReadOnlyCollection<TrainingSession> GetSessions()
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT id, date, type, duration, intensity, notes
-            FROM training_sessions
-            ORDER BY date DESC;
-            """;
+    public event PropertyChangedEventHandler? PropertyChanged;
 
-        using var reader = command.ExecuteReader();
-        var sessions = new List<TrainingSession>();
-        while (reader.Read())
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+internal sealed class TrainingExperiment
+{
+    private readonly int _weeks;
+    private readonly int _sessionsPerWeek;
+    private readonly int _runs;
+
+    public TrainingExperiment(int weeks, int sessionsPerWeek, int runs)
+    {
+        _weeks = weeks;
+        _sessionsPerWeek = sessionsPerWeek;
+        _runs = runs;
+    }
+
+    public ExperimentResult Run(TrainingPlan plan)
+    {
+        var random = new Random(HashCode.Combine(plan.Name, _weeks, _sessionsPerWeek, _runs));
+        var totalDays = _weeks * 7;
+        var workoutProbability = _sessionsPerWeek / 7.0;
+
+        var fitnessHistory = new List<double>(_runs * totalDays);
+        var burnoutCount = 0;
+        var stabilityAccumulator = 0.0;
+
+        for (var run = 0; run < _runs; run++)
         {
-            sessions.Add(MapSession(reader));
+            var fitness = 0.0;
+            var fatigue = 0.0;
+            var burnout = false;
+
+            for (var day = 0; day < totalDays; day++)
+            {
+                var hasWorkout = random.NextDouble() < workoutProbability;
+                if (hasWorkout)
+                {
+                    var stimulus = plan.BaseStimulus * (1 + random.NextDouble() * plan.Variation - plan.Variation / 2);
+                    var adaptationGain = stimulus * plan.AdaptationRate;
+                    var fatigueGain = stimulus * plan.FatigueRate;
+                    fitness += adaptationGain;
+                    fatigue += fatigueGain;
+                }
+
+                stabilityAccumulator += fitness > fatigue ? 1 : 0;
+
+                fatigue = Math.Max(0, fatigue - plan.RecoverySpeed);
+                fitness = Math.Max(0, fitness * 0.995);
+
+                if (fatigue > fitness * 2.2)
+                {
+                    burnout = true;
+                }
+
+                fitnessHistory.Add(fitness - fatigue * 0.5);
+            }
+
+            if (burnout)
+            {
+                burnoutCount++;
+            }
         }
 
-        return sessions;
-    }
+        fitnessHistory.Sort();
+        var averageFitness = fitnessHistory.Average();
+        var percentile95 = fitnessHistory[(int)(fitnessHistory.Count * 0.95)];
+        var stability = stabilityAccumulator / (_runs * totalDays);
 
-    public TrainingSession AddSession(DateOnly date, string type, int duration, int intensity, string notes)
-    {
-        var session = new TrainingSession(Guid.NewGuid(), date, type.Trim(), Math.Max(1, duration), intensity, notes.Trim());
-
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO training_sessions (id, date, type, duration, intensity, notes)
-            VALUES ($id, $date, $type, $duration, $intensity, $notes);
-            """;
-        command.Parameters.AddWithValue("$id", session.Id.ToString());
-        command.Parameters.AddWithValue("$date", session.Date.ToString(DateFormat, CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("$type", session.Type);
-        command.Parameters.AddWithValue("$duration", session.DurationMinutes);
-        command.Parameters.AddWithValue("$intensity", session.Intensity);
-        command.Parameters.AddWithValue("$notes", session.Notes);
-        command.ExecuteNonQuery();
-
-        return session;
-    }
-
-    public bool RemoveSession(Guid id)
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM training_sessions WHERE id = $id;";
-        command.Parameters.AddWithValue("$id", id.ToString());
-        return command.ExecuteNonQuery() > 0;
-    }
-
-    public TrainingStatistics BuildStatistics()
-    {
-        using var connection = OpenConnection();
-
-        using var totalsCommand = connection.CreateCommand();
-        totalsCommand.CommandText = """
-            SELECT COUNT(*), COALESCE(SUM(duration),0), COALESCE(AVG(duration),0), COALESCE(AVG(intensity),0)
-            FROM training_sessions;
-            """;
-        using var totalsReader = totalsCommand.ExecuteReader();
-        totalsReader.Read();
-
-        var totalSessions = totalsReader.GetInt32(0);
-        var totalMinutes = totalsReader.GetInt32(1);
-        var avgDuration = totalsReader.GetDouble(2);
-        var avgIntensity = totalsReader.GetDouble(3);
-
-        string? mostPopular = null;
-        if (totalSessions > 0)
-        {
-            using var popularCommand = connection.CreateCommand();
-            popularCommand.CommandText = """
-                SELECT type
-                FROM training_sessions
-                WHERE TRIM(type) <> ''
-                GROUP BY type
-                ORDER BY COUNT(*) DESC
-                LIMIT 1;
-                """;
-            mostPopular = popularCommand.ExecuteScalar() as string;
-        }
-
-        using var lastWeekCommand = connection.CreateCommand();
-        lastWeekCommand.CommandText = "SELECT COUNT(*) FROM training_sessions WHERE date >= $threshold;";
-        var threshold = DateOnly.FromDateTime(DateTime.Today).AddDays(-7).ToString(DateFormat, CultureInfo.InvariantCulture);
-        lastWeekCommand.Parameters.AddWithValue("$threshold", threshold);
-        var lastWeekSessions = Convert.ToInt32(lastWeekCommand.ExecuteScalar() ?? 0);
-
-        return new TrainingStatistics(
-            totalSessions,
-            totalMinutes,
-            totalSessions == 0 ? 0 : avgDuration,
-            totalSessions == 0 ? 0 : avgIntensity,
-            mostPopular,
-            lastWeekSessions);
-    }
-
-    private void Initialize()
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS training_sessions (
-                id TEXT PRIMARY KEY,
-                date TEXT NOT NULL,
-                type TEXT NOT NULL,
-                duration INTEGER NOT NULL,
-                intensity INTEGER NOT NULL,
-                notes TEXT
-            );
-            """;
-        command.ExecuteNonQuery();
-    }
-
-    private SqliteConnection OpenConnection()
-    {
-        var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        return connection;
-    }
-
-    private static TrainingSession MapSession(SqliteDataReader reader)
-    {
-        var id = Guid.Parse(reader.GetString(0));
-        var date = DateOnly.ParseExact(reader.GetString(1), DateFormat, CultureInfo.InvariantCulture);
-        var type = reader.GetString(2);
-        var duration = reader.GetInt32(3);
-        var intensity = reader.GetInt32(4);
-        var notes = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
-        return new TrainingSession(id, date, type, duration, intensity, notes);
+        return new ExperimentResult(
+            plan.Name,
+            averageFitness,
+            percentile95,
+            burnoutCount / (double)_runs,
+            stability);
     }
 }
+
+public sealed record ExperimentResult(
+    string PlanName,
+    double AverageFitness,
+    double FitnessPercentile95,
+    double BurnoutProbability,
+    double Stability);

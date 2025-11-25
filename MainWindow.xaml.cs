@@ -3,113 +3,90 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using Microsoft.Win32;
 
-namespace TrainingTracker.DatabaseApp;
+namespace TrainingTracker.ExperimentApp;
 
 public partial class MainWindow : Window
 {
-    private readonly TrainingDatabase _database;
-
-    public ObservableCollection<TrainingSession> Sessions { get; } = new();
-    public List<string> TrainingTypes { get; } =
-    [
-        "Бег",
-        "Силовая",
-        "Плавание",
-        "Йога/растяжка",
-        "Велотренажер",
-        "HIIT",
-        "Командные виды",
-        "Другое"
-    ];
+    public ObservableCollection<TrainingPlanOption> PlanOptions { get; } = new();
+    public ObservableCollection<ExperimentResult> Results { get; } = new();
+    private SummarySnapshot? _summary;
 
     public MainWindow()
     {
         InitializeComponent();
-        _database = new TrainingDatabase("training-sessions.db");
         DataContext = this;
-        SessionDatePicker.SelectedDate = DateTime.Today;
-        LoadSessions();
-        UpdateStats();
-    }
+        ExportButton.IsEnabled = false;
+        SummaryTextBlock.Text = "Пока нет данных. Запустите эксперимент.";
 
-    private void LoadSessions()
-    {
-        Sessions.Clear();
-        foreach (var session in _database.GetSessions().OrderByDescending(s => s.Date))
+        foreach (var plan in TrainingPlan.Predefined())
         {
-            Sessions.Add(session);
+            PlanOptions.Add(new TrainingPlanOption(plan));
         }
     }
 
-    private void OnAddSessionClick(object sender, RoutedEventArgs e)
+    private async void OnRunExperimentClick(object sender, RoutedEventArgs e)
     {
-        if (!SessionDatePicker.SelectedDate.HasValue)
-        {
-            MessageBox.Show("Укажите дату.", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        if (!int.TryParse(DurationTextBox.Text, out var duration) || duration <= 0)
-        {
-            MessageBox.Show("Введите длительность в минутах.", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var type = string.IsNullOrWhiteSpace(TypeComboBox.Text) ? "Не указано" : TypeComboBox.Text.Trim();
-        var intensity = (int)Math.Round(IntensitySlider.Value);
-        var notes = NotesTextBox.Text?.Trim() ?? string.Empty;
-
-        var session = _database.AddSession(
-            DateOnly.FromDateTime(SessionDatePicker.SelectedDate.Value),
-            type,
-            duration,
-            intensity,
-            notes);
-
-        Sessions.Insert(0, session);
-        UpdateStats();
-        ClearForm();
-    }
-
-    private void OnDeleteSessionClick(object sender, RoutedEventArgs e)
-    {
-        if (SessionsGrid.SelectedItem is not TrainingSession session)
-        {
-            MessageBox.Show("Выберите запись.", "Удаление", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        if (MessageBox.Show("Удалить выбранную тренировку?", "Подтверждение", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (!TryParseInputs(out var weeks, out var sessions, out var runs))
         {
             return;
         }
 
-        if (_database.RemoveSession(session.Id))
+        var activePlans = PlanOptions.Where(p => p.IsSelected).Select(p => p.Plan).ToList();
+        if (activePlans.Count == 0)
         {
-            Sessions.Remove(session);
-            UpdateStats();
+            MessageBox.Show("Оставьте хотя бы один план.", "Эксперимент", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ToggleControls(false);
+        StatusTextBlock.Text = "Выполняем вычисления...";
+
+        try
+        {
+            var results = await Task.Run(() =>
+            {
+                var experiment = new TrainingExperiment(weeks, sessions, runs);
+                return activePlans.Select(experiment.Run)
+                    .OrderByDescending(r => r.AverageFitness)
+                    .ToList();
+            });
+
+            Results.Clear();
+            foreach (var result in results)
+            {
+                Results.Add(result);
+            }
+
+            UpdateSummary(results);
+            StatusTextBlock.Text = $"Готово. Сценариев: {results.Count}.";
+        }
+        catch (Exception ex)
+        {
+            StatusTextBlock.Text = "Ошибка.";
+            MessageBox.Show($"Не удалось выполнить эксперимент: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ToggleControls(true);
         }
     }
 
-    private void OnRefreshStatsClick(object sender, RoutedEventArgs e) => UpdateStats();
-
-    private void OnClearFormClick(object sender, RoutedEventArgs e) => ClearForm();
-
-    private void OnExportCsvClick(object sender, RoutedEventArgs e)
+    private void OnExportResultsClick(object sender, RoutedEventArgs e)
     {
-        if (Sessions.Count == 0)
+        if (Results.Count == 0 || _summary is null)
         {
-            MessageBox.Show("Нет данных для экспорта.", "Экспорт", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("Сначала выполните эксперимент.", "Экспорт", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
         var dialog = new SaveFileDialog
         {
             Filter = "CSV файлы (*.csv)|*.csv",
-            FileName = $"training-report-{DateTime.Today:yyyyMMdd}.csv"
+            FileName = $"experiment-report-{DateTime.Today:yyyyMMdd}.csv"
         };
 
         if (dialog.ShowDialog() != true)
@@ -119,31 +96,25 @@ public partial class MainWindow : Window
 
         try
         {
-            var stats = _database.BuildStatistics();
             var builder = new StringBuilder();
-            builder.AppendLine("Дата;Тип;Длительность, мин;Интенсивность;Комментарий;ID");
-
-            foreach (var session in _database.GetSessions().OrderBy(s => s.Date))
+            builder.AppendLine("План;Средняя форма;95% форма;Вероятность выгорания (%);Стабильность");
+            foreach (var result in Results)
             {
                 builder.AppendLine(string.Join(';', new[]
                 {
-                    session.DateFormatted,
-                    Escape(session.Type),
-                    session.DurationMinutes.ToString(CultureInfo.InvariantCulture),
-                    session.Intensity.ToString(CultureInfo.InvariantCulture),
-                    Escape(session.Notes),
-                    session.Id.ToString()
+                    CsvEscape(result.PlanName),
+                    result.AverageFitness.ToString("F1", CultureInfo.InvariantCulture),
+                    result.FitnessPercentile95.ToString("F1", CultureInfo.InvariantCulture),
+                    (result.BurnoutProbability * 100).ToString("F1", CultureInfo.InvariantCulture),
+                    result.Stability.ToString("F2", CultureInfo.InvariantCulture)
                 }));
             }
 
             builder.AppendLine();
-            builder.AppendLine("Метрика;Значение");
-            builder.AppendLine($"Всего тренировок;{stats.TotalSessions}");
-            builder.AppendLine($"Всего минут;{stats.TotalMinutes}");
-            builder.AppendLine($"Средняя длительность;{stats.AverageDurationMinutes:F1}");
-            builder.AppendLine($"Средняя интенсивность;{stats.AverageIntensity:F1}");
-            builder.AppendLine($"Популярный тип;{stats.MostPopularWorkout ?? "—"}");
-            builder.AppendLine($"Тренировок за 7 дней;{stats.LastWeekSessions}");
+            builder.AppendLine("Итоги;Значение");
+            builder.AppendLine($"Лучшая средняя форма;{CsvEscape($"{_summary.BestOverall.PlanName} ({_summary.BestOverall.AverageFitness:F1})")}");
+            builder.AppendLine($"Самый стабильный план;{CsvEscape($"{_summary.MostStable.PlanName} ({_summary.MostStable.Stability:F2})")}");
+            builder.AppendLine($"Самый безопасный план;{CsvEscape($"{_summary.Safest.PlanName} ({_summary.Safest.BurnoutProbability * 100:F1}% выгорания)")}");
 
             File.WriteAllText(dialog.FileName, builder.ToString(), Encoding.UTF8);
             MessageBox.Show("Экспорт завершён.", "Экспорт", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -154,34 +125,69 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ClearForm()
+    private bool TryParseInputs(out int weeks, out int sessions, out int runs)
     {
-        SessionDatePicker.SelectedDate = DateTime.Today;
-        TypeComboBox.Text = string.Empty;
-        DurationTextBox.Clear();
-        IntensitySlider.Value = 5;
-        NotesTextBox.Clear();
-    }
-
-    private void UpdateStats()
-    {
-        var stats = _database.BuildStatistics();
-        TotalSessionsText.Text = stats.TotalSessions.ToString(CultureInfo.InvariantCulture);
-        TotalMinutesText.Text = stats.TotalMinutes.ToString(CultureInfo.InvariantCulture);
-        AverageDurationText.Text = $"{stats.AverageDurationMinutes:F1} мин";
-        AverageIntensityText.Text = $"{stats.AverageIntensity:F1}/10";
-        PopularTypeText.Text = string.IsNullOrWhiteSpace(stats.MostPopularWorkout) ? "—" : stats.MostPopularWorkout;
-        WeeklySessionsText.Text = stats.LastWeekSessions.ToString(CultureInfo.InvariantCulture);
-    }
-
-    private static string Escape(string? value)
-    {
-        if (string.IsNullOrEmpty(value))
+        weeks = sessions = runs = 0;
+        if (!int.TryParse(WeeksTextBox.Text, out weeks) || weeks < 2 || weeks > 52)
         {
-            return string.Empty;
+            MessageBox.Show("Количество недель: 2–52.", "Параметры", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
 
-        return value.Contains(';') ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
+        if (!int.TryParse(SessionsTextBox.Text, out sessions) || sessions < 1 || sessions > 14)
+        {
+            MessageBox.Show("Тренировок в неделю: 1–14.", "Параметры", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        if (!int.TryParse(RunsTextBox.Text, out runs) || runs < 50 || runs > 5000)
+        {
+            MessageBox.Show("Прогонов: 50–5000.", "Параметры", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        return true;
     }
+
+    private void ToggleControls(bool isEnabled)
+    {
+        WeeksTextBox.IsEnabled = isEnabled;
+        SessionsTextBox.IsEnabled = isEnabled;
+        RunsTextBox.IsEnabled = isEnabled;
+        PlanList.IsEnabled = isEnabled;
+        RunButton.IsEnabled = isEnabled;
+        ExportButton.IsEnabled = isEnabled && _summary is not null;
+        ResultsGrid.IsEnabled = isEnabled;
+    }
+
+    private void UpdateSummary(IReadOnlyList<ExperimentResult> results)
+    {
+        if (results.Count == 0)
+        {
+            _summary = null;
+            SummaryTextBlock.Text = "Нет данных для отображения.";
+            ExportButton.IsEnabled = false;
+            return;
+        }
+
+        var bestOverall = results.MaxBy(r => r.AverageFitness)!;
+        var mostStable = results.MaxBy(r => r.Stability)!;
+        var safest = results.MinBy(r => r.BurnoutProbability)!;
+        _summary = new SummarySnapshot(bestOverall, mostStable, safest);
+
+        SummaryTextBlock.Text =
+            $"Лучшая средняя форма — {bestOverall.PlanName} ({bestOverall.AverageFitness:F1}).\n" +
+            $"Самая высокая стабильность — {mostStable.PlanName} ({mostStable.Stability:F2}).\n" +
+            $"Минимальный риск выгорания — {safest.PlanName} ({safest.BurnoutProbability * 100:F1}%).";
+        ExportButton.IsEnabled = true;
+    }
+
+    private static string CsvEscape(string value) =>
+        value.Contains(';') ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
+
+    private sealed record SummarySnapshot(
+        ExperimentResult BestOverall,
+        ExperimentResult MostStable,
+        ExperimentResult Safest);
 }
 

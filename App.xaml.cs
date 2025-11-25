@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace TrainingTracker.DatabaseApp;
+namespace TrainingTracker.ExperimentApp;
 
 public partial class App : Application
 {
